@@ -101,7 +101,7 @@ jobs:
           import net.minecraft.entity.Entity;
           import net.minecraft.particle.ParticleEffect;
           import net.minecraft.particle.ParticleType;
-          import net.minecraft.particle.SimpleParticleType;
+          import net.minecraft.particle.DefaultParticleType;
           import net.minecraft.registry.Registries;
           import net.minecraft.text.Text;
           import net.minecraft.util.Identifier;
@@ -137,7 +137,7 @@ jobs:
                                   .executes(ctx -> {
                                       Identifier id = ctx.getArgument("id", Identifier.class);
                                       ParticleType<?> t = Registries.PARTICLE_TYPE.get(id);
-                                      if (!(t instanceof SimpleParticleType)) {
+                                      if (!(t instanceof DefaultParticleType)) {
                                           ctx.getSource().sendFeedback(Text.literal("Bu partikül desteklenmiyor (parametre gerektiriyor): " + id));
                                           return 0;
                                       }
@@ -177,7 +177,7 @@ jobs:
                   if (!enabled || world == null || client.player == null || client.isPaused()) return;
 
                   ParticleType<?> type = Registries.PARTICLE_TYPE.get(particleId);
-                  if (!(type instanceof SimpleParticleType effect)) return;
+                  if (!(type instanceof DefaultParticleType effect)) return;
 
                   double px = client.player.getX(), py = client.player.getY(), pz = client.player.getZ();
 
