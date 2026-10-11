@@ -1,0 +1,221 @@
+name: build
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+      - name: Create project files
+        run: |
+          mkdir -p $(dirname settings.gradle)
+          cat > settings.gradle <<'EOF_0'
+          pluginManagement {
+              repositories {
+                  maven { url = 'https://maven.fabricmc.net/' }
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          EOF_0
+          mkdir -p $(dirname gradle.properties)
+          cat > gradle.properties <<'EOF_1'
+          org.gradle.jvmargs=-Xmx1G
+          minecraft_version=1.20.1
+          yarn_mappings=1.20.1+build.10
+          loader_version=0.15.11
+          fabric_version=0.92.2+1.20.1
+          mod_version=1.0.0
+          maven_group=com.example
+          archives_base_name=visualfx
+          EOF_1
+          mkdir -p $(dirname build.gradle)
+          cat > build.gradle <<'EOF_2'
+          plugins {
+              id 'fabric-loom' version '1.5-SNAPSHOT'
+          }
+
+          version = project.mod_version
+          group = project.maven_group
+          base { archivesName = project.archives_base_name }
+
+          dependencies {
+              minecraft "com.mojang:minecraft:${project.minecraft_version}"
+              mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+              modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+              modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+          }
+
+          processResources {
+              inputs.property "version", project.version
+              filesMatching("fabric.mod.json") { expand "version": project.version }
+          }
+
+          tasks.withType(JavaCompile).configureEach { it.options.release = 17 }
+
+          java {
+              sourceCompatibility = JavaVersion.VERSION_17
+              targetCompatibility = JavaVersion.VERSION_17
+          }
+          EOF_2
+          mkdir -p $(dirname src/main/resources/fabric.mod.json)
+          cat > src/main/resources/fabric.mod.json <<'EOF_3'
+          {
+            "schemaVersion": 1,
+            "id": "visualfx",
+            "version": "${version}",
+            "name": "Visual FX",
+            "description": "Client-side particle effects everywhere. Use /fx.",
+            "environment": "client",
+            "entrypoints": {
+              "client": ["com.example.visualfx.VisualFxClient"]
+            },
+            "depends": {
+              "fabricloader": ">=0.15.0",
+              "minecraft": "~1.20.1",
+              "java": ">=17",
+              "fabric-api": "*"
+            }
+          }
+          EOF_3
+          mkdir -p $(dirname src/main/java/com/example/visualfx/VisualFxClient.java)
+          cat > src/main/java/com/example/visualfx/VisualFxClient.java <<'EOF_4'
+          package com.example.visualfx;
+
+          import com.mojang.brigadier.arguments.IntegerArgumentType;
+          import net.fabricmc.api.ClientModInitializer;
+          import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
+          import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
+          import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+          import net.minecraft.client.MinecraftClient;
+          import net.minecraft.client.world.ClientWorld;
+          import net.minecraft.command.CommandSource;
+          import net.minecraft.command.argument.IdentifierArgumentType;
+          import net.minecraft.entity.Entity;
+          import net.minecraft.particle.ParticleEffect;
+          import net.minecraft.particle.ParticleType;
+          import net.minecraft.particle.SimpleParticleType;
+          import net.minecraft.registry.Registries;
+          import net.minecraft.text.Text;
+          import net.minecraft.util.Identifier;
+          import net.minecraft.util.math.Box;
+          import net.minecraft.util.math.random.Random;
+
+          public class VisualFxClient implements ClientModInitializer {
+
+              public enum Mode { AROUND, FEET, ENTITIES }
+
+              static boolean enabled = true;
+              static Identifier particleId = new Identifier("minecraft", "campfire_cosy_smoke");
+              static int density = 5;   // particles per tick
+              static int radius = 12;   // blocks
+              static Mode mode = Mode.AROUND;
+
+              private static final Random RNG = Random.create();
+
+              @Override
+              public void onInitializeClient() {
+                  ClientTickEvents.END_CLIENT_TICK.register(VisualFxClient::tick);
+
+                  ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
+                      dispatcher.register(ClientCommandManager.literal("fx")
+                          .then(ClientCommandManager.literal("toggle").executes(ctx -> {
+                              enabled = !enabled;
+                              ctx.getSource().sendFeedback(Text.literal("FX: " + (enabled ? "açık" : "kapalı")));
+                              return 1;
+                          }))
+                          .then(ClientCommandManager.literal("particle")
+                              .then(ClientCommandManager.argument("id", IdentifierArgumentType.identifier())
+                                  .suggests((ctx, b) -> CommandSource.suggestIdentifiers(Registries.PARTICLE_TYPE.getIds(), b))
+                                  .executes(ctx -> {
+                                      Identifier id = ctx.getArgument("id", Identifier.class);
+                                      ParticleType<?> t = Registries.PARTICLE_TYPE.get(id);
+                                      if (!(t instanceof SimpleParticleType)) {
+                                          ctx.getSource().sendFeedback(Text.literal("Bu partikül desteklenmiyor (parametre gerektiriyor): " + id));
+                                          return 0;
+                                      }
+                                      particleId = id;
+                                      ctx.getSource().sendFeedback(Text.literal("Partikül: " + id));
+                                      return 1;
+                                  })))
+                          .then(ClientCommandManager.literal("density")
+                              .then(ClientCommandManager.argument("n", IntegerArgumentType.integer(1, 100))
+                                  .executes(ctx -> {
+                                      density = IntegerArgumentType.getInteger(ctx, "n");
+                                      ctx.getSource().sendFeedback(Text.literal("Yoğunluk: " + density + "/tick"));
+                                      return 1;
+                                  })))
+                          .then(ClientCommandManager.literal("radius")
+                              .then(ClientCommandManager.argument("n", IntegerArgumentType.integer(1, 48))
+                                  .executes(ctx -> {
+                                      radius = IntegerArgumentType.getInteger(ctx, "n");
+                                      ctx.getSource().sendFeedback(Text.literal("Yarıçap: " + radius));
+                                      return 1;
+                                  })))
+                          .then(ClientCommandManager.literal("mode")
+                              .then(ClientCommandManager.literal("around").executes(ctx -> setMode(ctx.getSource(), Mode.AROUND)))
+                              .then(ClientCommandManager.literal("feet").executes(ctx -> setMode(ctx.getSource(), Mode.FEET)))
+                              .then(ClientCommandManager.literal("entities").executes(ctx -> setMode(ctx.getSource(), Mode.ENTITIES))))
+                      ));
+              }
+
+              private static int setMode(net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource src, Mode m) {
+                  mode = m;
+                  src.sendFeedback(Text.literal("Mod: " + m.name().toLowerCase()));
+                  return 1;
+              }
+
+              private static void tick(MinecraftClient client) {
+                  ClientWorld world = client.world;
+                  if (!enabled || world == null || client.player == null || client.isPaused()) return;
+
+                  ParticleType<?> type = Registries.PARTICLE_TYPE.get(particleId);
+                  if (!(type instanceof SimpleParticleType effect)) return;
+
+                  double px = client.player.getX(), py = client.player.getY(), pz = client.player.getZ();
+
+                  switch (mode) {
+                      case AROUND -> {
+                          for (int i = 0; i < density; i++) {
+                              double x = px + (RNG.nextDouble() * 2 - 1) * radius;
+                              double y = py + (RNG.nextDouble() * 2 - 0.5) * (radius / 2.0);
+                              double z = pz + (RNG.nextDouble() * 2 - 1) * radius;
+                              world.addParticle(effect, x, y, z, 0, 0.02, 0);
+                          }
+                      }
+                      case FEET -> {
+                          for (int i = 0; i < density; i++) {
+                              world.addParticle(effect,
+                                  px + (RNG.nextDouble() - 0.5) * 0.6, py + 0.05, pz + (RNG.nextDouble() - 0.5) * 0.6,
+                                  0, 0.03, 0);
+                          }
+                      }
+                      case ENTITIES -> {
+                          Box box = client.player.getBoundingBox().expand(radius);
+                          for (Entity e : world.getOtherEntities(null, box)) {
+                              for (int i = 0; i < Math.max(1, density / 3); i++) {
+                                  world.addParticle(effect,
+                                      e.getX() + (RNG.nextDouble() - 0.5) * e.getWidth(),
+                                      e.getY() + RNG.nextDouble() * e.getHeight(),
+                                      e.getZ() + (RNG.nextDouble() - 0.5) * e.getWidth(),
+                                      0, 0.02, 0);
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          EOF_4
+      - name: Build
+        run: gradle build --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visualfx-jar
+          path: build/libs/*.jar
